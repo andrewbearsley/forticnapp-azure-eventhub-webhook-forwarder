@@ -1,0 +1,28 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
+.terraform.lock.hcl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Azure Functions
+function/local.settings.json
+function/.python_packages/
+function/bin/
+function/obj/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Scratch
+tmp/
+private/

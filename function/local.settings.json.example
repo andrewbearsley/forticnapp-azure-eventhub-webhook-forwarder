@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "EVENT_HUB_NAMESPACE_FQDN": "your-namespace.servicebus.windows.net",
+    "EVENT_HUB_NAME": "fcnapp-alerts",
+    "WEBHOOK_SHARED_SECRET": ""
+  }
+}

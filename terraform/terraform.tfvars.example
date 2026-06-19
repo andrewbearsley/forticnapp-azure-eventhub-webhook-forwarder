@@ -1,0 +1,5 @@
+subscription_id       = "00000000-0000-0000-0000-000000000000"
+location              = "australiaeast"
+
+# Optional. Rotate via Key Vault in production. Empty string disables the check.
+webhook_shared_secret = "change-me-rotate-me"
