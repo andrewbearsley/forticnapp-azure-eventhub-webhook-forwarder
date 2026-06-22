@@ -1,8 +1,8 @@
-# FortiCNAPP to Azure Event Hub Webhook Shim
+# FortiCNAPP to Azure Event Hub Webhook Forwarder
 
-A lightweight HTTPS shim that lets FortiCNAPP alerts land in an Azure Event Hub via the Custom Webhook channel.
+A lightweight HTTPS forwarder that lets FortiCNAPP alerts land in an Azure Event Hub via the Custom Webhook channel.
 
-FortiCNAPP ships native alert channels for Splunk, ServiceNow, Microsoft Teams, PagerDuty, and many more, but not Azure Event Hub. When Event Hub is the standard ingest pattern for your environment (e.g. everything funnels through Event Hub on the way to Splunk, Microsoft Sentinel, or a data lake), the recommended approach is to put a small HTTPS shim in front of Event Hub. This repo is that shim, packaged as Terraform + a minimal Python Azure Function.
+FortiCNAPP ships native alert channels for Splunk, ServiceNow, Microsoft Teams, PagerDuty, and many more, but not Azure Event Hub. When Event Hub is the standard ingest pattern for your environment (e.g. everything funnels through Event Hub on the way to Splunk, Microsoft Sentinel, or a data lake), the recommended approach is to put a small HTTPS forwarder in front of Event Hub. This repo is that forwarder, packaged as Terraform + a minimal Python Azure Function.
 
 ## Architecture
 
@@ -43,8 +43,8 @@ Approximate cost in `australiaeast`: ~AUD 20/month at low traffic (Event Hub Sta
 ### Step 1: Provision the Azure resources
 
 ```bash
-git clone https://github.com/andrewbearsley/forticnapp-azure-eventhub-webhook-shim.git
-cd forticnapp-azure-eventhub-webhook-shim/terraform
+git clone https://github.com/andrewbearsley/forticnapp-azure-eventhub-webhook-forwarder.git
+cd forticnapp-azure-eventhub-webhook-forwarder/terraform
 
 cp terraform.tfvars.example terraform.tfvars
 # edit terraform.tfvars: set subscription_id, location, webhook_shared_secret
@@ -91,7 +91,7 @@ In the FortiCNAPP console:
 1. **Settings > Notifications > Alert Channels > Add New > Custom Webhook**
 2. **Webhook URL**: paste the `webhook_endpoint` output and append `?code=<function-key>`. The full URL looks like:
    ```
-   https://fcnapp-eventhub-shim-abc123.azurewebsites.net/api/forward?code=<function-key>
+   https://fcnapp-eventhub-forwarder-abc123.azurewebsites.net/api/forward?code=<function-key>
    ```
 3. If you set a `webhook_shared_secret` in Terraform, add a custom header:
    - Header name: `X-Webhook-Secret`
@@ -101,7 +101,7 @@ In the FortiCNAPP console:
 
 ## Wire the downstream consumer
 
-The shim doesn't know or care what reads from Event Hub. Common patterns:
+The forwarder doesn't know or care what reads from Event Hub. Common patterns:
 
 | Downstream | How it reads from Event Hub |
 |---|---|

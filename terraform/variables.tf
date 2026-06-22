@@ -1,17 +1,17 @@
 variable "subscription_id" {
   type        = string
-  description = "Azure subscription ID where the shim resources are deployed."
+  description = "Azure subscription ID where the forwarder resources are deployed."
 }
 
 variable "resource_group_name" {
   type        = string
-  description = "Resource group name to create for the shim resources."
-  default     = "fcnapp-eventhub-shim"
+  description = "Resource group name to create for the forwarder resources."
+  default     = "fcnapp-eventhub-forwarder"
 }
 
 variable "location" {
   type        = string
-  description = "Azure region for all shim resources (e.g. australiaeast). Must be set explicitly."
+  description = "Azure region for all forwarder resources (e.g. australiaeast). Must be set explicitly."
 
   validation {
     condition     = length(var.location) > 0
@@ -22,7 +22,7 @@ variable "location" {
 variable "event_hub_namespace_name" {
   type        = string
   description = "Event Hub namespace base name. A 6-character random suffix is appended for global uniqueness."
-  default     = "fcnapp-eventhub-shim"
+  default     = "fcnapp-eventhub-forwarder"
 }
 
 variable "event_hub_name" {
@@ -34,7 +34,7 @@ variable "event_hub_name" {
 variable "function_app_name" {
   type        = string
   description = "Function App base name. A 6-character random suffix is appended for global uniqueness."
-  default     = "fcnapp-eventhub-shim"
+  default     = "fcnapp-eventhub-forwarder"
 }
 
 variable "webhook_shared_secret" {
