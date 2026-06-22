@@ -1,0 +1,7 @@
+subscription_id       = "00000000-0000-0000-0000-000000000000"
+location              = "australiaeast"
+
+# Optional. Rotate via Key Vault in production. Empty string disables the check.
+# The Logic App's trigger URL is SAS-signed regardless, so the secret is a
+# second factor rather than the only one.
+webhook_shared_secret = "change-me-rotate-me"
