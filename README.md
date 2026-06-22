@@ -1,42 +1,34 @@
 # FortiCNAPP to Azure Event Hub Webhook Forwarder
 
-A lightweight HTTPS forwarder that lets FortiCNAPP alerts land in an Azure Event Hub via the Custom Webhook channel.
-
-FortiCNAPP ships native alert channels for Splunk, ServiceNow, Microsoft Teams, PagerDuty, and many more, but not Azure Event Hub. When Event Hub is the standard ingest pattern for your environment (e.g. everything funnels through Event Hub on the way to Splunk, Microsoft Sentinel, or a data lake), the recommended approach is to put a small HTTPS forwarder in front of Event Hub. This repo is that forwarder, packaged as Terraform + a minimal Python Azure Function.
+FortiCNAPP has no native Event Hub alert channel. If Event Hub is already your ingest pipe (everything funnels through it on the way to Splunk, Sentinel, or a data lake), the cleanest path is a tiny HTTPS forwarder in front. This repo is that forwarder: Terraform + a small Python Azure Function.
 
 ## Architecture
 
-```
-FortiCNAPP Custom Webhook  ─POST JSON─►  Azure Function (HTTPS)  ─►  Azure Event Hub  ─►  Splunk / Sentinel / data lake
-```
+1. FortiCNAPP Custom Webhook posts the alert JSON over HTTPS to the Azure Function
+2. The Function checks the function key (and optionally a shared secret header), then writes the body to Azure Event Hub
+3. Downstream consumers (Splunk, Sentinel, a data lake) read from the same Event Hub
 
-- FortiCNAPP posts the alert JSON to the Function's HTTPS endpoint
-- The Function validates the function key (and optionally a shared secret header), then forwards the body to Event Hub
-- Downstream consumers (Splunk Add-on for Microsoft Cloud Services, Sentinel data connectors, etc.) read from the same Event Hub
-
-The Function authenticates to Event Hub via System-Assigned Managed Identity with the `Azure Event Hubs Data Sender` role. No connection strings.
+The Function uses a System-Assigned Managed Identity with `Azure Event Hubs Data Sender`, so there's no connection string to manage.
 
 ## What gets deployed
 
 | Resource | Notes |
 |---|---|
 | Resource Group | Container for everything below |
-| Event Hub Namespace + Event Hub | Standard tier, 1 throughput unit, 2 partitions, 1-day retention |
-| Storage Account | Backing storage for the Function App (required) |
+| Event Hub Namespace + Hub | Standard tier, 1 TU, 2 partitions, 1-day retention |
+| Storage Account | Backing store for the Function App |
 | App Service Plan | Linux Consumption (Y1), scales to zero |
-| Linux Function App | Python 3.11, System-Assigned Managed Identity, HTTPS only |
+| Linux Function App | Python 3.11, System-Assigned MI, HTTPS only |
 | Role assignment | Function App MI gets `Azure Event Hubs Data Sender` at the namespace |
 
-Approximate cost in `australiaeast`: ~AUD 20/month at low traffic (Event Hub Standard is the dominant cost; Function Consumption is effectively free for this workload).
+Roughly AUD 20-30/month in `australiaeast` at low traffic. Event Hub Standard (1 TU) is most of it; the Function on Consumption is basically free for this workload. Costs scale with ingress volume.
 
 ## Prerequisites
 
 1. Azure CLI logged in (`az login --tenant <tenant_id>`)
 2. Terraform 1.9+
-3. Azure Functions Core Tools 4.x (for `func azure functionapp publish`)
-   - macOS: `brew install azure/functions/azure-functions-core-tools@4`
-   - Windows: `winget install Microsoft.AzureFunctionsCoreTools`
-4. Python 3.11 locally (the Function uses Python 3.11; matching the local version avoids surprises during the publish step)
+3. Azure Functions Core Tools 4.x (`brew install azure/functions/azure-functions-core-tools@4` on macOS, `winget install Microsoft.AzureFunctionsCoreTools` on Windows)
+4. Python 3.11 locally. Matches what the Function runs, avoids publish-time surprises.
 
 ## Deploy
 
@@ -47,33 +39,25 @@ git clone https://github.com/andrewbearsley/forticnapp-azure-eventhub-webhook-fo
 cd forticnapp-azure-eventhub-webhook-forwarder/terraform
 
 cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars: set subscription_id, location, webhook_shared_secret
+# edit terraform.tfvars: subscription_id, location, webhook_shared_secret
 
 terraform init
 terraform plan
 terraform apply
 ```
 
-Terraform outputs the Function App name, webhook endpoint, and Event Hub namespace FQDN. Capture them:
-
-```bash
-terraform output -raw function_app_name
-terraform output -raw webhook_endpoint
-terraform output -raw event_hub_namespace_fqdn
-```
+Terraform outputs the Function App name, webhook endpoint, and Event Hub namespace FQDN.
 
 ### Step 2: Deploy the Function code
 
-From the repo root:
-
 ```bash
-cd function
+cd ../function
 func azure functionapp publish $(terraform -chdir=../terraform output -raw function_app_name)
 ```
 
-This packages the Python code, pushes it to the Function App, and installs the dependencies in `requirements.txt`. First publish takes 1-2 minutes.
+First publish takes a minute or two. It packages the Python, pushes it up, installs the deps in `requirements.txt`.
 
-### Step 3: Get the function key
+### Step 3: Grab the function key
 
 ```bash
 az functionapp keys list \
@@ -82,101 +66,89 @@ az functionapp keys list \
   --query "functionKeys.default" -o tsv
 ```
 
-Save the key. You'll paste it into FortiCNAPP next.
+Save it. Goes into FortiCNAPP next.
 
 ## Wire FortiCNAPP
 
 In the FortiCNAPP console:
 
 1. **Settings > Notifications > Alert Channels > Add New > Custom Webhook**
-2. **Webhook URL**: paste the `webhook_endpoint` output and append `?code=<function-key>`. The full URL looks like:
+2. Paste the `webhook_endpoint` output and append `?code=<function-key>`:
    ```
    https://fcnapp-eventhub-forwarder-abc123.azurewebsites.net/api/forward?code=<function-key>
    ```
-3. If you set a `webhook_shared_secret` in Terraform, add a custom header:
-   - Header name: `X-Webhook-Secret`
-   - Header value: the same secret
-4. Click **Test**. The Function logs an entry and forwards a sample payload to Event Hub. Verify in Event Hub's **Process Data > Capture** preview or via `az eventhubs eventhub` queries.
-5. Bind the channel to alert rules under **Settings > Notifications > Alert Rules** by severity, integration source, or resource group.
+3. If you set a `webhook_shared_secret` in Terraform, add a custom header `X-Webhook-Secret` with the same value
+4. Click **Test**. The Function logs an entry and pushes a sample to Event Hub. Verify via `az eventhubs eventhub` or the portal **Process Data** preview.
+5. Bind the channel to alert rules under **Settings > Notifications > Alert Rules**
 
 ## Wire the downstream consumer
 
-The forwarder doesn't know or care what reads from Event Hub. Common patterns:
+The forwarder doesn't care who reads from Event Hub. Pick your poison:
 
-| Downstream | How it reads from Event Hub |
+| Downstream | How it reads |
 |---|---|
-| **Splunk** | Splunk Add-on for Microsoft Cloud Services configured with an Event Hub input |
+| **Splunk** | Splunk Add-on for Microsoft Cloud Services with an Event Hub input |
 | **Microsoft Sentinel** | Data Connector with an Event Hub source |
 | **Azure Data Explorer / Fabric** | Event Hub data connection |
-| **Custom consumer** | Any AMQP / Kafka-compatible client using the Event Hub SDK |
+| **Custom** | Any AMQP / Kafka-compatible client via the Event Hub SDK |
 
-Connection details for the consumer:
+Connection details:
 
-- Namespace FQDN: see `event_hub_namespace_fqdn` Terraform output
-- Event Hub name: see `event_hub_name` Terraform output (default: `fcnapp-alerts`)
-- Auth: create a separate Shared Access Policy with `Listen` permission, or grant the consumer's identity `Azure Event Hubs Data Receiver` at the Event Hub or namespace scope
+- Namespace FQDN from the `event_hub_namespace_fqdn` output
+- Event Hub name from `event_hub_name` (default `fcnapp-alerts`)
+- Auth: separate SAS policy with `Listen`, or grant the consumer's identity `Azure Event Hubs Data Receiver`
 
 ## Operations
 
-### Rotating the shared secret
+### Rotate the shared secret
 
-```bash
-# Update Terraform variable
-# edit terraform/terraform.tfvars: set new webhook_shared_secret
-cd terraform
-terraform apply
-# Then update the X-Webhook-Secret header on the FortiCNAPP Custom Webhook channel
-```
+Edit `terraform/terraform.tfvars`, `terraform apply`, then update the `X-Webhook-Secret` header on the FortiCNAPP channel.
 
-### Rotating the function key
+### Rotate the function key
 
 ```bash
 az functionapp keys set \
-  --resource-group <rg> \
-  --name <function-app> \
-  --key-type functionKeys \
-  --key-name default
+  --resource-group <rg> --name <function-app> \
+  --key-type functionKeys --key-name default
 ```
 
-A new default key value is returned. Update the `?code=` parameter on the FortiCNAPP Custom Webhook channel.
+A new value comes back. Update the `?code=` on the FortiCNAPP channel.
 
 ### Monitoring
 
-The Function logs to Application Insights if connected (not provisioned here by default; add `azurerm_application_insights` to `main.tf` if you want it). For lightweight monitoring, use `az functionapp log tail`.
+`az functionapp log tail` for live tail. For real observability, add `azurerm_application_insights` to `main.tf` and link it on the Function App.
 
-### Locking down the inbound
+### Lock down inbound
 
-For tighter posture, restrict the Function App to known FortiCNAPP egress IPs via `site_config.ip_restriction`. Lacework's documented SaaS egress IPs are listed in the FortiCNAPP docs and change occasionally; pin them carefully.
+Add `site_config.ip_restriction` on the Function App to allowlist FortiCNAPP's documented SaaS egress IPs. The current list lives at <a href="https://docs.fortinet.com/document/forticnapp/latest/administration-guide/264821/prepare-the-environment-for-lacework-forticnapp" target="_blank">FortiCNAPP: Inbound and outbound connections</a> and changes occasionally, so pin carefully.
 
-### Locking down the Event Hub
+### Lock down Event Hub
 
-Add `azurerm_eventhub_namespace_network_rules` to constrain who can produce / consume from the namespace. The Function's Managed Identity uses the Azure backbone and is unaffected by IP rules, but external consumers (Splunk on-prem, Sentinel in another tenant) will need their IPs allowlisted.
+Add `azurerm_eventhub_namespace_network_rules` to constrain producers and consumers. The Function's MI rides the Azure backbone and ignores IP rules; external consumers (on-prem Splunk, Sentinel in another tenant) will need their IPs allowlisted.
 
 ## Local development
 
 ```bash
 cd function
 cp local.settings.json.example local.settings.json
-# edit local.settings.json: set EVENT_HUB_NAMESPACE_FQDN, EVENT_HUB_NAME, optional WEBHOOK_SHARED_SECRET
+# edit: EVENT_HUB_NAMESPACE_FQDN, EVENT_HUB_NAME, optional WEBHOOK_SHARED_SECRET
 
-# install deps in a venv
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# run locally
 func start
 ```
 
-Note: local runs use `DefaultAzureCredential`, which falls through to `az login` credentials. You'll need `Azure Event Hubs Data Sender` on the namespace for the local user identity to test the full path.
+Local runs use `DefaultAzureCredential`, which picks up your `az login` creds. Your user needs `Azure Event Hubs Data Sender` on the namespace to test the full path.
 
-## Related guides
+## Related
 
-- <a href="https://github.com/andrewbearsley/forticnapp-azure-integration-guide" target="_blank">FortiCNAPP Azure Integration Guide</a> (Config + Activity Log + DSPM + FortiGate + Alert Channels)
+- <a href="https://github.com/andrewbearsley/forticnapp-azure-integration-guide" target="_blank">FortiCNAPP Azure Integration Guide</a> (Config, Activity Log, DSPM, FortiGate, Alert Channels)
 - <a href="https://github.com/andrewbearsley/forticnapp-azure-agentless-workload-scanning-guide" target="_blank">FortiCNAPP Azure Agentless Workload Scanning Guide</a>
 
 ## References
 
 - <a href="https://docs.fortinet.com/document/forticnapp/26.2.0/administration-guide/659277/datadog-alert-channel" target="_blank">FortiCNAPP Administration Guide: Alert Channels</a>
 - <a href="https://learn.microsoft.com/en-us/azure/azure-functions/functions-reference-python" target="_blank">Azure Functions Python Developer Guide</a>
-- <a href="https://learn.microsoft.com/en-us/azure/event-hubs/authenticate-managed-identity" target="_blank">Authenticate a managed identity with Microsoft Entra ID to access Event Hubs</a>
+- <a href="https://learn.microsoft.com/en-us/azure/event-hubs/authenticate-managed-identity" target="_blank">Authenticate Managed Identity to Event Hubs</a>

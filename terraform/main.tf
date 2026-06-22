@@ -84,9 +84,10 @@ resource "azurerm_linux_function_app" "forwarder" {
   }
 
   app_settings = {
-    EVENT_HUB_NAMESPACE_FQDN = "${azurerm_eventhub_namespace.forwarder.name}.servicebus.windows.net"
-    EVENT_HUB_NAME           = azurerm_eventhub.alerts.name
-    WEBHOOK_SHARED_SECRET    = var.webhook_shared_secret
+    EVENT_HUB_NAMESPACE_FQDN  = "${azurerm_eventhub_namespace.forwarder.name}.servicebus.windows.net"
+    EVENT_HUB_NAME            = azurerm_eventhub.alerts.name
+    WEBHOOK_SHARED_SECRET     = var.webhook_shared_secret
+    AzureWebJobsFeatureFlags  = "EnableWorkerIndexing"
   }
 }
 
